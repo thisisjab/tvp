@@ -1,0 +1,2 @@
+- [ ] Update OpenAPI Swagger to reflect 422 error as our custom format, not the default one.
+- [ ] Find a solution to include sever-raised exceptions in Swagger documentation automatically
