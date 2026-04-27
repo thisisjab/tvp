@@ -1,18 +1,16 @@
 import uuid
 from datetime import timedelta
-from typing import Self
+from typing import Protocol, Self
 
 import magic
 import minio
 from minio import Minio
 from pydantic import BaseModel
-from redis.asyncio import Redis
 
 from tvp import config
 from tvp.errors import BadRequestError, FieldsError, InternalServerError
 from tvp.files import storage_keys
 from tvp.files.models import UploadedFile
-from tvp.files.repo import FileRepo
 from tvp.files.schemas import (
     ConfirmFileUploadSchema,
     CreateUploadRequestSchema,
@@ -31,18 +29,20 @@ class _FileUploadRequestJWTSchema(BaseModel):
     size_bytes: int
 
 
+class FileRepoProtocol(Protocol):
+    async def create(self: Self, file: UploadedFile) -> UploadedFile: ...
+
+
 class FileService:
     """FileService performs operations related to file storage and retrival."""
 
     def __init__(
         self: Self,
-        file_repo: FileRepo,
-        redis: Redis,
+        file_repo: FileRepoProtocol,
         minio: Minio,
         bucket: str,
     ) -> None:
         self._file_repo = file_repo
-        self._redis = redis
         self._minio = minio
         self._bucket = bucket
 
@@ -51,23 +51,27 @@ class FileService:
         self.FILE_UPLOAD_REQUEST_EXPIRY = timedelta(
             seconds=config.file_upload.upload_url_expiry_seconds
         )
+        self.DEFAULT_DOWNLOAD_URL_EXPIRY = timedelta(
+            seconds=config.file_upload.default_download_url_expiry_seconds
+        )
 
     async def create_upload_request(
         self: Self, req: CreateUploadRequestSchema
     ) -> FileUploadResponse:
         """Validate upload request and generate a pre-signed resumable upload link.
 
-        Client will use given `upload_url` to upload file before expiry. Then it will
-        notify file service (using `file_id`) that upload is finalized in client-side
-        so that file service can confirm upload.
+        Client will use given `upload_url` to upload file before expiry. After a
+        successful file upload, client will finalize upload by sending back the
+        given token. If uploaded file is eqaul to values stored in token, file record
+        is stored in database and upload is finalized.
         """
         # Validation in advance so that client doesn't need uploading if some rule
         # is voiolated
-        if req.size_bytes > self.MAX_FILE_SIZE_BYTES:
+        if not (1 <= req.size_bytes <= self.MAX_FILE_SIZE_BYTES):
             raise FieldsError(
                 {
                     "size_bytes": [
-                        f"Upload size_bytes cannot be greater than {self.MAX_FILE_SIZE_BYTES}."  # noqa: E501
+                        f"Upload size_bytes must be between 1 and {self.MAX_FILE_SIZE_BYTES}."  # noqa: E501
                     ]
                 }
             )
@@ -160,6 +164,11 @@ class FileService:
                 mimetype=actual_mimetype,
                 uploader_id=req.uploader_id,
             )
+        )
+
+        # Get download link
+        file.url = self._minio.get_presigned_url(  # ty:ignore[unresolved-attribute]
+            "GET", self._bucket, file.key, self.DEFAULT_DOWNLOAD_URL_EXPIRY
         )
 
         return FileSchema.model_validate(file, from_attributes=True)

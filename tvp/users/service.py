@@ -1,5 +1,6 @@
 from datetime import timedelta
-from typing import Self
+from typing import Protocol, Self
+from uuid import UUID
 
 from pydantic import BaseModel
 from redis.asyncio import Redis
@@ -7,12 +8,11 @@ from redis.asyncio import Redis
 from tvp import config
 from tvp.errors import FieldsError, UnathenticatedUserError
 from tvp.users.models import User
-from tvp.users.repo import UserRepo
 from tvp.users.schemas import (
     AccessTokenSchema,
-    AuthenticateUserByAccessTokenRequest,
+    AuthenticateUserByAccessTokenSchema,
     CreateUserSchema,
-    ObtainAccessTokenRequest,
+    ObtainAccessTokenSchema,
     UserSchema,
 )
 from tvp.users.utils import create_jwt, password_hasher, validate_jwt
@@ -24,8 +24,15 @@ class _AccessTokenJWTSchema(BaseModel):
     user_id: str
 
 
+class UserRepoProtocol(Protocol):
+    async def create(self: Self, user: User) -> User: ...
+    async def get_by_id(self: Self, id_: UUID) -> User | None: ...
+    async def get_by_username(self: Self, username: str) -> User | None: ...
+    async def delete_by_id(self: Self, id_: UUID) -> None: ...
+
+
 class UserService:
-    def __init__(self: Self, user_repo: UserRepo, redis: Redis) -> None:
+    def __init__(self: Self, user_repo: UserRepoProtocol, redis: Redis) -> None:
         self._user_repo = user_repo
         self._redis = redis
 
@@ -41,7 +48,7 @@ class UserService:
             # this key in cache_keys file of users module.
             lock_name=f"user-registration#{req.username}",
         ):
-            if await self._user_repo.get_user_by_username(req.username) is not None:
+            if await self._user_repo.get_by_username(req.username) is not None:
                 raise FieldsError({"username": ["This username is already taken."]})
 
             # Hash password
@@ -58,14 +65,14 @@ class UserService:
 
             return UserSchema.model_validate(user, from_attributes=True)
 
-    async def obtain_token(
-        self: Self, req: ObtainAccessTokenRequest
+    async def obtain_access_token(
+        self: Self, req: ObtainAccessTokenSchema
     ) -> AccessTokenSchema:
-        """Obtain token by validating combination of username and password."""
+        """Obtain access token by validating combination of username and password."""
         # TODO: prevent password timing attacks
 
         # Validate username and password
-        user = await self._user_repo.get_user_by_username(req.username)
+        user = await self._user_repo.get_by_username(req.username)
         if user is None:
             raise UnathenticatedUserError
 
@@ -83,7 +90,7 @@ class UserService:
         return AccessTokenSchema(user_id=user.id, token=token, expires_at=expires_at)
 
     async def authenticate_user_by_access_token(
-        self: Self, req: AuthenticateUserByAccessTokenRequest
+        self: Self, req: AuthenticateUserByAccessTokenSchema
     ) -> UserSchema:
         """Check if token hasn't reached its expiry and is not black-listed.
 
@@ -97,7 +104,7 @@ class UserService:
         if payload is None:  # Token is expired or has incorrect signature/data
             raise UnathenticatedUserError
 
-        user = await self._user_repo.get(User.id == payload.user_id)
+        user = await self._user_repo.get_by_id(UUID(payload.user_id))
         if user is None:
             raise UnathenticatedUserError
 

@@ -28,3 +28,16 @@ class APIError(Exception):
             response["metadata"] = self.metadata
 
         return response, self.code.value
+
+    def __eq__(self: Self, other: object) -> bool:  # noqa: D105
+        if not isinstance(other, APIError):
+            return False
+
+        return (
+            self.code == other.code
+            and self.message == other.message
+            and self.metadata == other.metadata
+        )
+
+    def __hash__(self: Self) -> int:  # noqa: D105
+        return hash(frozenset({self.code, self.message, self.metadata}))

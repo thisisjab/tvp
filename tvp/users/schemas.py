@@ -33,14 +33,21 @@ class RegisterUserRequest(BaseModel):
     plain_password: str = Field(min_length=8, alias="password")
 
 
-class ObtainAccessTokenRequest(BaseModel):
+class ObtainAccessTokenSchema(BaseModel):
     """
-    ObtainAccessTokenRequest is the request schema for users/clients to
-    get a JWT token which can be used for athentication in protected routes.
+    ObtainAccessTokenSchema is the service request schema to get a JWT token
+    which can be used for athentication in protected routes.
     """  # noqa: D205
 
     username: str
     plain_password: str = Field(alias="password")
+
+
+class ObtainAccessTokenRequest(ObtainAccessTokenSchema):
+    """
+    ObtainAccessTokenRequest is the request schema for users/clients to
+    get a JWT token which can be used for athentication in protected routes.
+    """  # noqa: D205
 
 
 class AccessTokenSchema(BaseModel):
@@ -51,9 +58,9 @@ class AccessTokenSchema(BaseModel):
     user_id: UUID
 
 
-class AuthenticateUserByAccessTokenRequest(BaseModel):
+class AuthenticateUserByAccessTokenSchema(BaseModel):
     """
-    AuthenticateUserByAccessTokenRequest is used by user service to retrieve ACTIVE
+    AuthenticateUserByAccessTokenSchema is used by user service to retrieve ACTIVE
     user from the given access token with access token is still valid.
 
     Refer to user service for more info.

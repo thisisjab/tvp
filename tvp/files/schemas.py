@@ -1,9 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
-
-from tvp import config
+from pydantic import BaseModel
 
 
 class FileSchema(BaseModel):
@@ -28,18 +26,10 @@ class FileSchema(BaseModel):
 class FileUploadRequest(BaseModel):  # Used in routes
     """FileUploadRequest defines the schema of request body of clients when getting pre-signed upload URL."""  # noqa: E501
 
+    # Validation of these fields happens in file service
     name: str
     mimetype: str
-    size_bytes: int = Field(gt=0, lt=config.file_upload.max_upload_size_bytes)
-
-    @field_validator("mimetype")
-    @classmethod
-    def validate_mimetype(cls, v: str) -> str:
-        if v not in config.file_upload.allowed_mimetypes:
-            s = ", ".join(config.file_upload.allowed_mimetypes)
-            msg = f"Mimetype must be one of {s}"
-            raise ValueError(msg)
-        return v
+    size_bytes: int
 
 
 class CreateUploadRequestSchema(FileUploadRequest):  # Used in service

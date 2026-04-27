@@ -6,7 +6,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from tvp.database.deps import DBSession
 from tvp.redis.deps import RedisClient
 from tvp.users.repo import UserRepo
-from tvp.users.schemas import AuthenticateUserByAccessTokenRequest, UserSchema
+from tvp.users.schemas import AuthenticateUserByAccessTokenSchema, UserSchema
 from tvp.users.service import UserService
 
 
@@ -34,7 +34,7 @@ async def get_current_user(
     token = credentials.credentials
 
     return await user_service.authenticate_user_by_access_token(
-        AuthenticateUserByAccessTokenRequest(token=token)
+        AuthenticateUserByAccessTokenSchema(token=token)
     )
 
 

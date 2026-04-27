@@ -6,6 +6,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class FileUploadConfiguration(BaseSettings):
+    default_download_url_expiry_seconds: int = Field(
+        default=60 * 3600  # 60 minutes
+    )
     upload_url_expiry_seconds: int = Field(
         default=15 * 3600  # 15 minutes
     )

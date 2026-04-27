@@ -32,4 +32,4 @@ async def obtain_access_token(
     Client must send `Authorization: Bearer <token>` in all request headers
     in order to be authenticated.
     """
-    return await user_service.obtain_token(req)
+    return await user_service.obtain_access_token(req)
