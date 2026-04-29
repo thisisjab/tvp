@@ -1,6 +1,7 @@
 import uuid
 from datetime import timedelta
 from typing import Protocol, Self
+from uuid import UUID
 
 import magic
 import minio
@@ -31,6 +32,7 @@ class _FileUploadRequestJWTSchema(BaseModel):
 
 class FileRepoProtocol(Protocol):
     async def create(self: Self, file: UploadedFile) -> UploadedFile: ...
+    async def get_by_id(self: Self, id_: UUID) -> UploadedFile: ...
 
 
 class FileService:
@@ -172,3 +174,7 @@ class FileService:
         )
 
         return FileSchema.model_validate(file, from_attributes=True)
+
+    async def get_by_id(self: Self, id_: UUID) -> FileSchema | None:
+        f = await self._file_repo.get_by_id(id_)
+        return FileSchema.model_validate(f, from_attributes=True)

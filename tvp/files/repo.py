@@ -1,5 +1,7 @@
 from typing import Self
+from uuid import UUID
 
+import sqlalchemy as sqla
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvp.files.models import UploadedFile
@@ -17,6 +19,11 @@ class FileRepo:
         await self._db_session.refresh(file)
         return file
 
+    async def get_by_id(self: Self, id_: UUID) -> UploadedFile:
+        """Fetch a file from database by its id."""
+        q = sqla.select(UploadedFile).where(UploadedFile.id == id_)
+        return (await self._db_session.execute(q)).scalar_one()
+
 
 class InMemoryFileRepo:
     def __init__(self: Self) -> None:
@@ -31,3 +38,10 @@ class InMemoryFileRepo:
         file.updated_at = get_now()
         self._db.append(file)
         return file
+
+    async def get_by_id(self: Self, id_: UUID) -> UploadedFile | None:
+        for f in self._db:
+            if f.id == id_:
+                return f
+
+        return None

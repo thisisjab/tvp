@@ -8,7 +8,9 @@ from tvp.users.constants import UserRole
 class User(DatabaseModel, UUIDModelMixin, TimestampedModelMixin):
     """User represents a user in database."""
 
-    username: Mapped[str] = mapped_column(sqla.types.String, nullable=False, unique=True)
+    username: Mapped[str] = mapped_column(
+        sqla.types.String, nullable=False, unique=True
+    )
     password: Mapped[str] = mapped_column(sqla.types.String, nullable=False)
     role: Mapped[UserRole] = mapped_column(sqla.types.Enum(UserRole), nullable=False)
 
