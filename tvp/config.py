@@ -5,6 +5,11 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+class BrokerConfiguration(BaseSettings):
+    address: str = Field(default="amqp://guest:guest@localhost:5672")  # Rabbitmq
+    result_backend: str = Field(default="redis://localhost")  # Redis
+
+
 class FileUploadConfiguration(BaseSettings):
     default_download_url_expiry_seconds: int = Field(
         default=60 * 3600  # 60 minutes
@@ -73,6 +78,7 @@ class PostgresDatabaseConfiguration(BaseSettings):
 
 
 class ServerConfiguration(BaseSettings):
+    broker: BrokerConfiguration = Field(default=BrokerConfiguration())
     file_upload: FileUploadConfiguration = Field(default=FileUploadConfiguration())
     jwt: JWTConifugration = Field(default=JWTConifugration())
     minio: MinioConfiguration = Field(default=MinioConfiguration())
