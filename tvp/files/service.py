@@ -177,4 +177,10 @@ class FileService:
 
     async def get_by_id(self: Self, id_: UUID) -> FileSchema | None:
         f = await self._file_repo.get_by_id(id_)
+
+        # Get download link
+        f.url = self._minio.get_presigned_url(  # ty:ignore[unresolved-attribute]
+            "GET", self._bucket, f.key, self.DEFAULT_DOWNLOAD_URL_EXPIRY
+        )
+
         return FileSchema.model_validate(f, from_attributes=True)
