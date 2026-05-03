@@ -32,7 +32,7 @@ class _FileUploadRequestJWTSchema(BaseModel):
 
 class FileRepoProtocol(Protocol):
     async def create(self: Self, file: UploadedFile) -> UploadedFile: ...
-    async def get_by_id(self: Self, id_: UUID) -> UploadedFile: ...
+    async def get_by_id(self: Self, id_: UUID) -> UploadedFile | None: ...
     async def exists_by_id(self: Self, id_: UUID) -> bool: ...
 
 
@@ -184,8 +184,11 @@ class FileService:
     async def get_by_id(self: Self, id_: UUID) -> FileSchema | None:
         f = await self._file_repo.get_by_id(id_)
 
+        if not f:
+            return None
+
         # Get download link
-        f.url = self._minio.get_presigned_url(  # ty:ignore[unresolved-attribute]
+        f.url = self._minio.get_presigned_url(  # ty:ignore[invalid-assignment]
             "GET", self._bucket, f.key, self.DEFAULT_DOWNLOAD_URL_EXPIRY
         )
 

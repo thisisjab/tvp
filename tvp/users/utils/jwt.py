@@ -12,7 +12,13 @@ logger = structlog.get_logger()
 
 def create_jwt(payload: BaseModel, expires_at: datetime | int) -> str:
     payload = payload.model_dump()
-    payload.update({"exp": expires_at})
+    payload.update(
+        {
+            "exp": int(expires_at.timestamp())
+            if isinstance(expires_at, datetime)
+            else expires_at
+        }
+    )
     return jwt.encode(payload, config.jwt.secret_key, algorithm="HS256")
 
 

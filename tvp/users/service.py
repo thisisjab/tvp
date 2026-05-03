@@ -2,6 +2,7 @@ from datetime import timedelta
 from typing import Protocol, Self
 from uuid import UUID
 
+import structlog
 from pydantic import BaseModel
 from redis.asyncio import Redis
 
@@ -19,6 +20,8 @@ from tvp.users.utils import create_jwt, password_hasher, validate_jwt
 from tvp.utils.datetime import get_now
 from tvp.utils.redis import RedisLock
 
+logger = structlog.getLogger()
+
 
 class _AccessTokenJWTSchema(BaseModel):
     user_id: str
@@ -35,7 +38,6 @@ class UserService:
     def __init__(self: Self, user_repo: UserRepoProtocol, redis: Redis) -> None:
         self._user_repo = user_repo
         self._redis = redis
-
         self.jwt_expiry = timedelta(seconds=config.jwt.auth_token_expiry_seconds)
 
     async def create_user(self: Self, req: CreateUserSchema) -> UserSchema:
@@ -102,10 +104,14 @@ class UserService:
 
         payload = validate_jwt(req.token, _AccessTokenJWTSchema)
         if payload is None:  # Token is expired or has incorrect signature/data
+            logger.debug("attempted login with expired/invalid token")
             raise UnathenticatedUserError
 
         user = await self._user_repo.get_by_id(UUID(payload.user_id))
         if user is None:
+            logger.debug(
+                "attempted login with no existing user", user_id=payload.user_id
+            )
             raise UnathenticatedUserError
 
         return UserSchema.model_validate(user, from_attributes=True)

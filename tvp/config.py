@@ -1,4 +1,3 @@
-import uuid
 from typing import Self
 
 from pydantic import Field
@@ -35,9 +34,11 @@ class FileUploadConfiguration(BaseSettings):
     )
 
 
-class JWTConifugration(BaseSettings):
+class JWTConfiguration(BaseSettings):
     auth_token_expiry_seconds: int = Field(default=24 * 60 * 60)  # 24 hours
-    secret_key: str = Field(default=str(uuid.uuid4()), min_length=32)
+    secret_key: str = Field(
+        default="*** PLEASE CHANGE ME IN PRODUCTIOIN ***", min_length=32
+    )
 
 
 class MinioConfiguration(BaseSettings):
@@ -80,7 +81,7 @@ class PostgresDatabaseConfiguration(BaseSettings):
 class ServerConfiguration(BaseSettings):
     broker: BrokerConfiguration = Field(default=BrokerConfiguration())
     file_upload: FileUploadConfiguration = Field(default=FileUploadConfiguration())
-    jwt: JWTConifugration = Field(default=JWTConifugration())
+    jwt: JWTConfiguration = Field(default=JWTConfiguration())
     minio: MinioConfiguration = Field(default=MinioConfiguration())
     postgres: PostgresDatabaseConfiguration = Field(
         default=PostgresDatabaseConfiguration()

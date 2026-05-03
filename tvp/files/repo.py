@@ -19,13 +19,13 @@ class FileRepo:
         await self._db_session.refresh(file)
         return file
 
-    async def get_by_id(self: Self, id_: UUID) -> UploadedFile:
+    async def get_by_id(self: Self, id_: UUID) -> UploadedFile | None:
         """Fetch a file from database by its id."""
         q = sqla.select(UploadedFile).where(UploadedFile.id == id_)
-        return (await self._db_session.execute(q)).scalar_one()
+        return (await self._db_session.execute(q)).scalar_one_or_none()
 
     async def exists_by_id(self: Self, id_: UUID) -> bool:
-        """Check if a file exists database by its id."""
+        """Check if file with given id exists in database."""
         q = sqla.select(sqla.exists(UploadedFile)).where(UploadedFile.id == id_)
         return (await self._db_session.execute(q)).scalar_one()
 
