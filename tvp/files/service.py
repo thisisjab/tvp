@@ -102,6 +102,7 @@ class FileService:
         object_key = storage_keys.file_upload_key(
             req.mimetype,
             generated_file_id,
+            req.name,
         )
         upload_url = self._minio.presigned_put_object(
             bucket_name=self._bucket,
@@ -133,7 +134,7 @@ class FileService:
 
         # Generate object key
         object_key = storage_keys.file_upload_key(
-            data.mimetype, uuid.UUID(data.generated_file_id)
+            data.mimetype, uuid.UUID(data.generated_file_id), data.name
         )
 
         # Get object stat from minio to make sure file exists

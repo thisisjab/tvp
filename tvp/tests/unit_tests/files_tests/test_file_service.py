@@ -181,7 +181,9 @@ class TestFileService:
         assert token_body is not None
         assert str(result.id) == token_body.generated_file_id
         assert result.key == tvp.files.storage_keys.file_upload_key(
-            result.mimetype, result.id
+            result.mimetype,
+            result.id,
+            result.name,
         )
         assert result.size_bytes == create_upload_req.size_bytes
         assert result.mimetype == create_upload_req.mimetype
@@ -379,7 +381,9 @@ class TestFileService:
                 size_bytes=token_body.size_bytes,
                 uploader_id=UUID(token_body.uploader_id),
                 key=tvp.files.storage_keys.file_upload_key(
-                    token_body.mimetype, UUID(token_body.generated_file_id)
+                    token_body.mimetype,
+                    UUID(token_body.generated_file_id),
+                    token_body.name,
                 ),
             )
         )
