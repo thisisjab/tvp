@@ -24,6 +24,11 @@ class FileRepo:
         q = sqla.select(UploadedFile).where(UploadedFile.id == id_)
         return (await self._db_session.execute(q)).scalar_one()
 
+    async def exists_by_id(self: Self, id_: UUID) -> bool:
+        """Check if a file exists database by its id."""
+        q = sqla.select(sqla.exists(UploadedFile)).where(UploadedFile.id == id_)
+        return (await self._db_session.execute(q)).scalar_one()
+
 
 class InMemoryFileRepo:
     def __init__(self: Self) -> None:
@@ -45,3 +50,6 @@ class InMemoryFileRepo:
                 return f
 
         return None
+
+    async def exists_by_id(self: Self, id_: UUID) -> bool:
+        return any(f for f in self._db if f.id == id_)

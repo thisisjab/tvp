@@ -33,6 +33,7 @@ class _FileUploadRequestJWTSchema(BaseModel):
 class FileRepoProtocol(Protocol):
     async def create(self: Self, file: UploadedFile) -> UploadedFile: ...
     async def get_by_id(self: Self, id_: UUID) -> UploadedFile: ...
+    async def exists_by_id(self: Self, id_: UUID) -> bool: ...
 
 
 class FileService:
@@ -123,6 +124,11 @@ class FileService:
         data = validate_jwt(req.request_token, _FileUploadRequestJWTSchema)
         if data is None:
             msg = "Request token is invalid."
+            raise BadRequestError(msg)
+
+        # Check if file is not already in database
+        if await self._file_repo.exists_by_id(UUID(data.generated_file_id)):
+            msg = "File upload request is already finalized."
             raise BadRequestError(msg)
 
         # Generate object key

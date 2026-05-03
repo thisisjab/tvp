@@ -1,12 +1,14 @@
 import uuid
 from typing import Self
 from unittest.mock import Mock, patch
+from uuid import UUID
 
 import minio
 import pytest
 
 import tvp.files.storage_keys
 from tvp.errors import BadRequestError, FieldsError
+from tvp.files.models import UploadedFile
 from tvp.files.schemas import (
     ConfirmFileUploadSchema,
     CreateUploadRequestSchema,
@@ -336,3 +338,60 @@ class TestFileService:
         assert e.value == BadRequestError(
             f"Uploaded file mimetype does not match ({create_upload_req.mimetype})."
         )
+
+    @pytest.mark.parametrize(
+        "create_upload_req",
+        [
+            CreateUploadRequestSchema(
+                uploader_id=uuid.uuid4(),
+                name="file",
+                mimetype="a",
+                size_bytes=10,
+            ),
+        ],
+    )
+    async def test_confirm_upload_with_already_finalized_upload(
+        self: Self,
+        create_upload_req: CreateUploadRequestSchema,
+        file_service: FileService,
+    ) -> None:
+        """Test valid token raises bad reqest if file is already inside database."""
+        # Arrange
+        file_service.ALLOWED_MIMETYPES = ["a", "b"]
+        file_service.MAX_FILE_SIZE_BYTES = 1024
+
+        # Mocking
+        file_service._minio.presigned_put_object.return_value = "some-url"  # ty:ignore[unresolved-attribute]  # noqa: SLF001
+
+        # Reading generated token's content
+        upload_request = await file_service.create_upload_request(create_upload_req)
+        token_body = validate_jwt(
+            upload_request.request_token, _FileUploadRequestJWTSchema
+        )
+        assert token_body is not None
+
+        # Create file with the same id in database
+        await file_service._file_repo.create(  # noqa: SLF001
+            UploadedFile(
+                id=UUID(token_body.generated_file_id),
+                name=token_body.name,
+                mimetype=token_body.mimetype,
+                size_bytes=token_body.size_bytes,
+                uploader_id=UUID(token_body.uploader_id),
+                key=tvp.files.storage_keys.file_upload_key(
+                    token_body.mimetype, UUID(token_body.generated_file_id)
+                ),
+            )
+        )
+
+        # Act
+        with pytest.raises(BadRequestError) as e:
+            await file_service.confirm_upload(
+                ConfirmFileUploadSchema(
+                    request_token=upload_request.request_token,
+                    uploader_id=create_upload_req.uploader_id,
+                )
+            )
+
+        # Assert
+        assert e.value == BadRequestError("File upload request is already finalized.")
