@@ -12,6 +12,7 @@ dependencies = [
     "fastapi>=0.136.0",
     "httpx>=0.28.1",
     "minio>=7.2.20",
+    "orjson>=3.11.8",
     "pydantic-settings>=2.13.1",
     "pyjwt>=2.12.1",
     "pytest>=9.0.3",
@@ -23,6 +24,7 @@ dependencies = [
     "taskiq>=0.12.2",
     "taskiq-aio-pika>=0.6.0",
     "taskiq-redis>=1.2.2",
+    "trio>=0.33.0",
     "uvicorn>=0.44.0",
 ]
 

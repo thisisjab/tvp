@@ -36,6 +36,16 @@ class BadRequestError(APIError):
         )
 
 
+class NotFoundError(APIError):
+    def __init__(
+        self: Self, message: str = "Requested resource was not found."
+    ) -> None:
+        super().__init__(
+            APIErrorCode.NOT_FOUND,
+            message,
+        )
+
+
 class InternalServerError(APIError):
     def __init__(self: Self, message: str = "Internal server error.") -> None:
         super().__init__(

@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from tvp.videos.constants import VideoVariantCode, VideoVariantProcessingState
+
 
 class VideoMasterPlaylist(BaseModel):
     """VideoMasterPlaylist defines the schema for master playlist of a video.
@@ -21,11 +23,11 @@ class VideoSchema(BaseModel):
 
     id: UUID
     owner_id: UUID
+    file_id: UUID = Field(exclude=True)
     title: str
     description: str
     is_public: bool
-    is_processed_for_streaming: bool = Field(default=False)
-    total_seconds: int | None = Field(default=None)
+    duration_seconds: float | None = Field(default=None)
     master_playlist: VideoMasterPlaylist | None = Field(default=None)
     created_at: datetime
 
@@ -78,3 +80,49 @@ class VideoProbeDataSchema(BaseModel):
 
         msg = "FPS cannot be none"
         raise ValueError(msg)
+
+
+class VideoVariantSchema(BaseModel):
+    """VideoVariantSchema defines the schema for VideoVariant model."""
+
+    video_id: UUID
+    variant_code: VideoVariantCode
+    fps: float
+    gop_size: int
+    video_bitrate: int
+    video_max_bitrate: int
+    video_buf_size: int
+    audio_bitrate: int
+    audio_sample_rate: int
+
+
+class CreateVideoVariantSchema(VideoVariantSchema):
+    """CreateVideoVariantRequest used to request to create video variant from service."""  # noqa: E501
+
+
+class GetVideoVariantSchema(BaseModel):
+    """GetVideoVariantSchema is used to get video variant record from video service."""
+
+    video_id: UUID
+    variant_code: VideoVariantCode
+
+
+class UpdateVideoSchema(BaseModel):
+    """UpdateVideoSchema defines the schema to update videos duration and master playlist file id."""  # noqa: E501
+
+    id: UUID
+    duration_seconds: float | None = Field(default=None)
+    master_playlist_file_id: UUID | None = Field(default=None)
+
+
+class UpdateVariantSchema(BaseModel):
+    video_id: UUID
+    variant_code: VideoVariantCode
+    state: VideoVariantProcessingState
+    fps: float | None = Field(default=None)
+    gop_size: int | None = Field(default=None)
+    video_bitrate: int | None = Field(default=None)
+    video_max_bitrate: int | None = Field(default=None)
+    video_buf_size: int | None = Field(default=None)
+    audio_bitrate: int | None = Field(default=None)
+    audio_sample_rate: int | None = Field(default=None)

@@ -183,6 +183,7 @@ class FileService:
         return FileSchema.model_validate(file, from_attributes=True)
 
     async def get_by_id(self: Self, id_: UUID) -> FileSchema | None:
+        """Get file given its id."""
         f = await self._file_repo.get_by_id(id_)
 
         if not f:
@@ -194,3 +195,11 @@ class FileService:
         )
 
         return FileSchema.model_validate(f, from_attributes=True)
+
+    async def direct_upload_from_file_path(self: Self, *args) -> FileSchema:  # noqa: ANN002
+        """Upload file stored in gien path with given key.
+
+        NOTE: This is an internal service method used by video processing
+        tasks to store chunks and playlists with their on respective hierarchy.
+        """
+        raise NotImplementedError

@@ -13,7 +13,7 @@ DBSession = Annotated[AsyncSession, Depends(get_db)]
 async def get_taskiq_db(
     context: Annotated[Context, TaskiqDepends()],
 ) -> AsyncGenerator[AsyncSession]:
-    async with context.state.get_db() as session:
+    async with context.state.session_maker() as session:
         yield session
 
 

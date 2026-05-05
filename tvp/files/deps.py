@@ -39,4 +39,4 @@ async def get_taskiq_file_service(
     return FileService(file_repo, minio, bucket=config.minio.bucket_name)
 
 
-TaskiqFileService = Annotated[FileService, TaskiqDepends(get_taskiq_file_service)]
+TaskiqFileServiceDep = Annotated[FileService, TaskiqDepends(get_taskiq_file_service)]
