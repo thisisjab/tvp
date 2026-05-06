@@ -18,6 +18,7 @@ from tvp.files.models import UploadedFile
 from tvp.files.schemas import (
     ConfirmFileUploadSchema,
     CreateUploadRequestSchema,
+    DirectPathUploadSchema,
     FileSchema,
     FileUploadResponse,
 )
@@ -201,24 +202,18 @@ class FileService:
 
         return FileSchema.model_validate(f, from_attributes=True)
 
-    async def direct_upload_from_file_path(
-        self: Self,
-        path: str,
-        name: str,
-        key: str,
-        upload_id: UUID,
-        *,
-        persist_in_db: bool = True,
+    async def direct_path_upload(
+        self: Self, req: DirectPathUploadSchema
     ) -> FileSchema | None:
         """Upload file stored in gien path with given key.
 
-        If you set `persist_in_db` to false, then None will be returned.
+        If you set `store_in_db` to false, then None will be returned.
 
         NOTE: This is an internal service method used by video processing
         tasks to store chunks and playlists with their on respective hierarchy.
         """
         # Validation
-        p = anyio.Path(path)
+        p = anyio.Path(req.file_path)
         if not await p.exists():
             msg = "File doesn't exist."
             raise ValueError(msg)
@@ -232,30 +227,32 @@ class FileService:
             msg = "File is too large."
             raise ValueError(msg)
 
-        mimetype = magic.from_file(path, mime=True)
+        mimetype = magic.from_file(req.file_path, mime=True)
         if mimetype not in config.file_upload.allowed_mimetypes:
             msg = f"Mimetype {mimetype} is not allowed."
             raise ValueError(msg)
+
+        # TODO: check if other object is already stored with given key
 
         # Upload
         await asyncio.to_thread(
             self._minio.fput_object,
             self._bucket,
-            key,
-            path,
+            req.key,
+            req.file_path,
             mimetype,
         )
 
         # Store
-        if persist_in_db:
+        if req.store_in_db:
             f = await self._file_repo.create(
                 UploadedFile(
                     id=uuid.uuid4(),
-                    name=name,
-                    key=key,
+                    name=req.name,
+                    key=req.key,
                     mimetype=mimetype,
                     size_bytes=size_bytes,
-                    uploader_id=upload_id,
+                    uploader_id=req.uploader_id,
                 )
             )
 

@@ -10,6 +10,7 @@ from minio.datatypes import JSONDecodeError
 import tvp.videos.cache_keys
 from tvp.errors import InternalServerError
 from tvp.files.deps import TaskiqFileServiceDep
+from tvp.files.schemas import DirectPathUploadSchema
 from tvp.redis.deps import TaskiqRedisClient
 from tvp.taskiq import broker
 from tvp.utils.redis import RedisLock
@@ -302,11 +303,13 @@ async def process_variant(
 
         # Upload processed variant
         logger.info("uploading variant", video_id=video_id, variant_code=variant_code)
-        variant_file: FileSchema = await file_service.direct_upload_from_file_path(
-            output_path,
-            output_name,
-            video_variant_storage_key(video_id, variant_code),
-            video.owner_id,
+        variant_file: FileSchema = await file_service.direct_path_upload(
+            DirectPathUploadSchema(
+                file_path=output_path,
+                name=output_name,
+                key=video_variant_storage_key(video_id, variant_code),
+                uploader_id=video.owner_id,
+            )
         )  # ty:ignore[invalid-assignment]
 
         # Decrease number of remaining jobs

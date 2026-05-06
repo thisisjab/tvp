@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class FileSchema(BaseModel):
@@ -71,3 +71,16 @@ class ConfirmFileUploadRequest(BaseModel):
     """
 
     request_token: str
+
+
+class DirectPathUploadSchema(BaseModel):
+    """
+    DirectPathUploadSchema defines the service request schema for uploading a file
+    directly from local disk to storage.
+    """  # noqa: D205
+
+    uploader_id: UUID
+    key: str
+    name: str
+    file_path: str
+    store_in_db: bool = Field(default=True)
