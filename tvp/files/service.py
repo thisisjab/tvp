@@ -1,15 +1,18 @@
+import asyncio
 import uuid
 from datetime import timedelta
 from typing import Protocol, Self
 from uuid import UUID
 
+import anyio
 import magic
 import minio
-from minio import Minio
+import structlog
+from minio import Minio, S3Error, ServerError
 from pydantic import BaseModel
 
 from tvp import config
-from tvp.errors import BadRequestError, FieldsError, InternalServerError
+from tvp.errors import BadRequestError, FieldsError, InternalServerError, NotFoundError
 from tvp.files import storage_keys
 from tvp.files.models import UploadedFile
 from tvp.files.schemas import (
@@ -20,6 +23,8 @@ from tvp.files.schemas import (
 )
 from tvp.users.utils import create_jwt, validate_jwt
 from tvp.utils.datetime import get_now
+
+logger = structlog.getLogger()
 
 
 class _FileUploadRequestJWTSchema(BaseModel):
@@ -196,10 +201,106 @@ class FileService:
 
         return FileSchema.model_validate(f, from_attributes=True)
 
-    async def direct_upload_from_file_path(self: Self, *args) -> FileSchema:  # noqa: ANN002
+    async def direct_upload_from_file_path(
+        self: Self,
+        path: str,
+        name: str,
+        key: str,
+        upload_id: UUID,
+        *,
+        persist_in_db: bool = True,
+    ) -> FileSchema | None:
         """Upload file stored in gien path with given key.
+
+        If you set `persist_in_db` to false, then None will be returned.
 
         NOTE: This is an internal service method used by video processing
         tasks to store chunks and playlists with their on respective hierarchy.
         """
-        raise NotImplementedError
+        # Validation
+        p = anyio.Path(path)
+        if not await p.exists():
+            msg = "File doesn't exist."
+            raise ValueError(msg)
+
+        if not await p.is_file():
+            msg = "Directory upload is not supported."
+            raise ValueError(msg)
+
+        size_bytes = (await p.stat()).st_size
+        if size_bytes > config.file_upload.max_upload_size_bytes:
+            msg = "File is too large."
+            raise ValueError(msg)
+
+        mimetype = magic.from_file(path, mime=True)
+        if mimetype not in config.file_upload.allowed_mimetypes:
+            msg = f"Mimetype {mimetype} is not allowed."
+            raise ValueError(msg)
+
+        # Upload
+        await asyncio.to_thread(
+            self._minio.fput_object,
+            self._bucket,
+            key,
+            path,
+            mimetype,
+        )
+
+        # Store
+        if persist_in_db:
+            f = await self._file_repo.create(
+                UploadedFile(
+                    id=uuid.uuid4(),
+                    name=name,
+                    key=key,
+                    mimetype=mimetype,
+                    size_bytes=size_bytes,
+                    uploader_id=upload_id,
+                )
+            )
+
+            # Get download link
+            f.url = self._minio.get_presigned_url(  # ty:ignore[unresolved-attribute]
+                "GET", self._bucket, f.key, self.DEFAULT_DOWNLOAD_URL_EXPIRY
+            )
+
+            return FileSchema.model_validate(f, from_attributes=True)
+
+        return None
+
+    async def download_to_path(self: Self, id_: UUID, output_path: str) -> None:
+        """Download a file to given path using the object key."""
+        file = await self._file_repo.get_by_id(id_)
+        if not file:
+            raise NotFoundError
+
+        try:
+            await asyncio.to_thread(
+                self._minio.fget_object, self._bucket, file.key, output_path
+            )
+        except S3Error as e:
+            if e.code == "NoSuchKey":
+                logger.exception(
+                    "no such key in the bucker to download",
+                    bucket=self._bucket,
+                    key=file.key,
+                    exc_info=e,
+                )
+                raise NotFoundError from e
+
+            logger.exception(
+                "unhandled s3 error",
+                bucket=self._bucket,
+                key=file.key,
+                exc_info=e,
+            )
+            raise ServerError from e
+        except (PermissionError, OSError) as e:
+            logger.exception(
+                "cannot create file",
+                bucket=self._bucket,
+                key=file.key,
+                output_path=output_path,
+                exc_info=e,
+            )
+            raise ServerError from e

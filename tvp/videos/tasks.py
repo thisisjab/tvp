@@ -7,9 +7,16 @@ import orjson
 import structlog
 from minio.datatypes import JSONDecodeError
 
+import tvp.videos.cache_keys
 from tvp.errors import InternalServerError
 from tvp.files.deps import TaskiqFileServiceDep
+from tvp.redis.deps import TaskiqRedisClient
 from tvp.taskiq import broker
+from tvp.utils.redis import RedisLock
+from tvp.videos.cache_keys import (
+    lock_video_remaining_processing_jobs_count,
+    video_remaining_processing_jobs_count,
+)
 from tvp.videos.constants import (
     AUDIO_BITRATES,
     HIGHEST_RESOLUTION_SUPPORTED,
@@ -28,6 +35,7 @@ from tvp.videos.schemas import (
     VideoProbeDataSchema,
     VideoSchema,
 )
+from tvp.videos.storage_keys import video_variant_storage_key
 
 if TYPE_CHECKING:
     from tvp.files.schemas import FileSchema
@@ -36,13 +44,150 @@ logger = structlog.getLogger(__name__)
 
 
 @broker.task
+async def create_master_playlist(
+    video_id: UUID,
+    video_service: TaskiqVideoServiceDep,
+    file_service: TaskiqFileServiceDep,
+    redis: TaskiqRedisClient,
+) -> None:
+    """Check if there are no remaining tasks and start creating segments."""
+    video = await video_service.get_by_id(video_id)
+    if not video:
+        logger.error(
+            "attempt to create master playlist with non existing video",
+            video_id=video_id,
+        )
+        return
+
+    async with RedisLock(
+        redis, lock_video_remaining_processing_jobs_count(video_id=video_id)
+    ):
+        remaining_jobs = await redis.get(
+            video_remaining_processing_jobs_count(video_id=video_id)
+        )
+
+        if remaining_jobs != "0":
+            logger.info(
+                "video is not ready to create hls playlist. skipping",
+                video_id=video_id,
+                remaining_jobs=remaining_jobs,
+            )
+            return
+
+    variants = await video_service.get_variants_by_video_id(video_id)
+    if not variants:
+        logger.error(
+            "attempt to create master playlist for a video with no variant",
+            video_id=video_id,
+        )
+        return
+
+    # Download varients
+    with tempfile.TemporaryDirectory(delete=False) as working_dir:
+        generated_fmp4s = []
+
+        for v in variants:
+            if v.file_id is None:
+                logger.error(
+                    "attempted to create fmp4 for variant without a file_id",
+                    video_id=video_id,
+                    variant_code=v.variant_code,
+                )
+                return
+
+            # Update status
+            await video_service.update_variant(
+                UpdateVariantSchema(
+                    video_id=video_id,
+                    variant_code=v.variant_code,
+                    state=VideoVariantProcessingState.MUXING,
+                )
+            )
+
+            # Download file
+            fmp4_src_path = f"{working_dir}/{v.variant_code.value}.mp4"
+            fmp4_out_path = f"{working_dir}/f_{v.variant_code.value}.mp4"
+            await file_service.download_to_path(
+                v.file_id,
+                fmp4_src_path,
+            )
+
+            logger.debug(
+                "video variant downloaded", video_id=video_id, path=fmp4_src_path
+            )
+
+            process = await asyncio.create_subprocess_exec(
+                "mp4fragment",
+                fmp4_src_path,
+                fmp4_out_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await process.communicate()
+            if process.returncode != 0:
+                logger.error(
+                    "cannot create fmp4",
+                    video_id=video_id,
+                    variant_code=v.variant_code,
+                    stdout=stdout.decode(),
+                    stderr=stderr.decode(),
+                )
+                msg = "Cannot create fmp4."
+                raise InternalServerError(msg)
+
+            generated_fmp4s.append(fmp4_out_path)
+            logger.info(
+                "finished creating fmp4",
+                video_id=video_id,
+                variant_code=v.variant_code,
+            )
+
+        # Create playlists
+        hls_output_dir = f"{working_dir}/hls/"
+        process = await asyncio.create_subprocess_exec(
+            "mp4hls",
+            f"--segment-duration={SEGMENT_LENGTH_SECONDS}",
+            f"--output-dir={hls_output_dir}",
+            *generated_fmp4s,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
+        if process.returncode != 0:
+            logger.error(
+                "cannot package to hls",
+                video_id=video_id,
+                stdout=stdout.decode(),
+                stderr=stderr.decode(),
+            )
+
+            await asyncio.gather(
+                *[
+                    video_service.update_variant(
+                        UpdateVariantSchema(
+                            video_id=video_id,
+                            variant_code=v.variant_code,
+                            state=VideoVariantProcessingState.MUXING_FAILED,
+                        )
+                    )
+                    for v in variants
+                ]
+            )
+
+            raise InternalServerError
+
+        logger.info("muxing done :)", video_id=video_id)
+
+
+@broker.task
 async def process_variant(
     video_id: UUID,
     variant_code: VideoVariantCode,
     video_service: TaskiqVideoServiceDep,
     file_service: TaskiqFileServiceDep,
+    redis: TaskiqRedisClient,
 ) -> None:
-    """Transcode video to fragmented mp4, store in storage, and fire muxing job.
+    """Transcode video to mp4, store in storage, and fire muxing job.
 
     For more info., visit probe_video task.
     """
@@ -72,6 +217,8 @@ async def process_variant(
         variant_code=variant_code,
         state=VideoVariantProcessingState.PROCESSING,
     )
+
+    # TODO: this can happen in probe_video task
     await video_service.update_variant(
         UpdateVariantSchema(
             video_id=video_id,
@@ -88,6 +235,8 @@ async def process_variant(
     )
 
     with tempfile.TemporaryDirectory(delete=True) as output_dir:
+        output_name = f"output-{variant_code.value}.mp4"
+        output_path = f"{output_dir}/{output_name}"
         video_params = [
             "-vf",
             f"fps={video_variant.fps},scale=-2:{video_variant.variant_code.value}",
@@ -129,7 +278,7 @@ async def process_variant(
             "frag_keyframe+empty_moov+default_base_moof",
             "-f",
             "mp4",
-            f"{output_dir}/output.mp4",
+            output_path,
         ]
 
         # TODO: add timeouts
@@ -151,11 +300,37 @@ async def process_variant(
             msg = "Probing video failed."
             raise InternalServerError(msg)
 
-        # Upload processes variant
+        # Upload processed variant
         logger.info("uploading variant", video_id=video_id, variant_code=variant_code)
+        variant_file: FileSchema = await file_service.direct_upload_from_file_path(
+            output_path,
+            output_name,
+            video_variant_storage_key(video_id, variant_code),
+            video.owner_id,
+        )  # ty:ignore[invalid-assignment]
 
-        # TODO: upload
-        # TODO: spawn bento4 task
+        # Decrease number of remaining jobs
+        async with RedisLock(
+            redis, lock_video_remaining_processing_jobs_count(video_id=video_id)
+        ):
+            await redis.incrby(
+                tvp.videos.cache_keys.video_remaining_processing_jobs_count(
+                    video_id=video_id
+                ),
+                -1,
+            )
+
+        # Update state
+        await video_service.update_variant(
+            UpdateVariantSchema(
+                video_id=video_id,
+                variant_code=variant_code,
+                state=VideoVariantProcessingState.MUXING_NOT_STARTED,
+                file_id=variant_file.id,
+            )
+        )
+
+        await create_master_playlist.kiq(video_id)  # ty:ignore[no-matching-overload]
 
 
 async def create_processing_jobs_for_video(
@@ -217,6 +392,7 @@ async def probe_video(
     video_id: UUID,
     video_service: TaskiqVideoServiceDep,
     file_service: TaskiqFileServiceDep,
+    redis: TaskiqRedisClient,
 ) -> None:
     """Extract video metadata using ffprobe and create variant records.
 
@@ -329,13 +505,19 @@ async def probe_video(
         UpdateVideoSchema(id=video_id, duration_seconds=probe_data.duration_seconds)
     )
 
-    # Generate jobs for video variants
+    # Generate jobs for video variants and store remaining count in redis
+    # Each job will check if count reached 0 and therefore bento4 can start muxing
     logger.info("creating processing jobs for video", video_id=video_id)
     variants = await create_processing_jobs_for_video(probe_data)
+
+    await redis.set(
+        tvp.videos.cache_keys.video_remaining_processing_jobs_count(video_id=video_id),
+        len(variants),
+    )
 
     for v in variants:
         logger.info(
             "creating varient for video", video_id=video_id, variant_code=v.variant_code
         )
         await video_service.create_empty_variant(v)
-        await process_variant.kiq(v.video_id, v.variant_code)
+        await process_variant.kiq(v.video_id, v.variant_code)  # ty:ignore[no-matching-overload]

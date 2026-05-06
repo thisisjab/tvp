@@ -1,5 +1,9 @@
 from uuid import UUID
 
 
-def video_probe_info(video_id: UUID | str) -> str:
-    return f"videos#{video_id!s}:probe-info"
+def lock_video_remaining_processing_jobs_count(video_id: UUID | str) -> str:
+    return f"lock:videos#{video_id!s}:remaining-processing-jobs-count"
+
+
+def video_remaining_processing_jobs_count(video_id: UUID | str) -> str:
+    return f"videos#{video_id!s}:remaining-processing-jobs-count"

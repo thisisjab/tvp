@@ -1,6 +1,7 @@
 import typing
 
 import structlog
+from sqlalchemy.ext.asyncio import async_sessionmaker
 from taskiq import (
     SmartRetryMiddleware,
     TaskiqEvents,
@@ -12,7 +13,7 @@ from taskiq_aio_pika import AioPikaBroker
 from taskiq_redis import RedisAsyncResultBackend
 
 from tvp import config
-from tvp.database.connection import session_maker
+from tvp.database.connection import engine
 from tvp.files.minio.connection import get_minio
 from tvp.redis.connection import get_redis
 
@@ -52,4 +53,7 @@ broker = (
 async def startup(state: TaskiqState) -> None:
     state.minio = get_minio()
     state.redis = get_redis()
-    state.session_maker = session_maker
+    state.session_maker = async_sessionmaker(
+        bind=engine,
+        expire_on_commit=False,
+    )

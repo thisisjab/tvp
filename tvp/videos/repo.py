@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from typing import Self
 from uuid import UUID
 
@@ -25,6 +26,11 @@ class VideoRepo:
         await self._db_session.commit()
         await self._db_session.refresh(video)
         return video
+
+    async def exists_by_id(self: Self, id_: UUID) -> bool:
+        """Check if video exists for given `id`."""
+        q = sqla.select(sqla.exists(Video)).where(Video.id == id_)
+        return (await self._db_session.execute(q)).scalar() or False
 
     async def exists_by_file_id(self: Self, file_id: UUID) -> bool:
         """Check if video exists for given `file_id`."""
@@ -64,3 +70,8 @@ class VideoVariantRepo:
             and VideoVariant.video_id == video_id
         )
         return (await self._db_session.execute(q)).scalar_one_or_none()
+
+    async def get_all_by_video_id(self: Self, video_id: UUID) -> Iterable[VideoVariant]:
+        """Get all variants that is created (available) for a video."""
+        q = sqla.select(VideoVariant).where(VideoVariant.video_id == video_id)
+        return (await self._db_session.execute(q)).scalars()

@@ -119,6 +119,8 @@ class UpdateVariantSchema(BaseModel):
     video_id: UUID
     variant_code: VideoVariantCode
     state: VideoVariantProcessingState
+    file_id: UUID | None = Field(default=None)
+    playlist_file_id: UUID | None = Field(default=None)
     fps: float | None = Field(default=None)
     gop_size: int | None = Field(default=None)
     video_bitrate: int | None = Field(default=None)

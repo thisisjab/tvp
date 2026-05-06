@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from typing import Protocol, Self
 from uuid import UUID
 
@@ -25,6 +26,7 @@ class FileServiceProtocol(Protocol):
 class VideoRepoProtocol(Protocol):
     async def create(self: Self, video: Video) -> Video: ...
     async def update(self: Self, video: Video) -> Video: ...
+    async def exists_by_id(self: Self, id_: UUID) -> bool: ...
     async def exists_by_file_id(self: Self, file_id: UUID) -> bool: ...
     async def get_by_id(self: Self, id_: UUID) -> Video | None: ...
 
@@ -32,6 +34,9 @@ class VideoRepoProtocol(Protocol):
 class VideoVariantRepoProtocol(Protocol):
     async def create(self: Self, variant: VideoVariant) -> VideoVariant: ...
     async def update(self: Self, variant: VideoVariant) -> VideoVariant: ...
+    async def get_all_by_video_id(
+        self: Self, video_id: UUID
+    ) -> Iterable[VideoVariant]: ...
     async def get_by_video_id_and_code(
         self: Self, video_id: UUID, variant_code: VideoVariantCode
     ) -> VideoVariant | None: ...
@@ -163,6 +168,15 @@ class VideoService:
 
         video = await self._video_repo.update(video)
         return VideoSchema.model_validate(video, from_attributes=True)
+
+    async def get_variants_by_video_id(
+        self: Self, video_id: UUID
+    ) -> Iterable[VideoVariant]:
+        """Get list of variants for given video id."""
+        if not await self._video_repo.exists_by_id(video_id):
+            raise NotFoundError
+
+        return await self._video_variant_repo.get_all_by_video_id(video_id)
 
     async def get_variant(
         self: Self, req: GetVideoVariantSchema
