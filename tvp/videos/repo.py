@@ -5,7 +5,7 @@ from uuid import UUID
 import sqlalchemy as sqla
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tvp.videos.constants import VideoVariantCode
+from tvp.videos.constants import VideoVariantCode, VideoVariantProcessingState
 from tvp.videos.models import Video, VideoVariant
 
 
@@ -75,3 +75,15 @@ class VideoVariantRepo:
         """Get all variants that is created (available) for a video."""
         q = sqla.select(VideoVariant).where(VideoVariant.video_id == video_id)
         return (await self._db_session.execute(q)).scalars()
+
+    async def batch_update_variant_states(
+        self: Self, video_id: UUID, state: VideoVariantProcessingState
+    ) -> None:
+        """Update variant state for given video."""
+        q = (
+            sqla.update(VideoVariant.state)
+            .where(VideoVariant.video_id == video_id)
+            .values(state=state)
+        )
+
+        await self._db_session.execute(q)

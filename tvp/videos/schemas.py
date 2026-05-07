@@ -87,6 +87,7 @@ class VideoVariantSchema(BaseModel):
 
     video_id: UUID
     variant_code: VideoVariantCode
+    file_id: UUID | None = Field(default=None)
     fps: float
     gop_size: int
     video_bitrate: int
@@ -116,6 +117,8 @@ class UpdateVideoSchema(BaseModel):
 
 
 class UpdateVariantSchema(BaseModel):
+    """UpdateVariantSchema is used to update fields of variants after each processing job."""  # noqa: E501
+
     video_id: UUID
     variant_code: VideoVariantCode
     state: VideoVariantProcessingState
@@ -128,3 +131,10 @@ class UpdateVariantSchema(BaseModel):
     video_buf_size: int | None = Field(default=None)
     audio_bitrate: int | None = Field(default=None)
     audio_sample_rate: int | None = Field(default=None)
+
+
+class BatchUpdateVideoVariantState(BaseModel):
+    """BatchUpdateVideoVariantState is used by tasks to inform about processing state of a variant."""  # noqa: E501
+
+    video_id: UUID
+    state: VideoVariantProcessingState

@@ -9,6 +9,7 @@ from tvp.files.schemas import FileSchema
 from tvp.videos.constants import VideoVariantCode, VideoVariantProcessingState
 from tvp.videos.models import Video, VideoVariant
 from tvp.videos.schemas import (
+    BatchUpdateVideoVariantState,
     CreateVideoSchema,
     CreateVideoVariantSchema,
     GetVideoVariantSchema,
@@ -34,6 +35,9 @@ class VideoRepoProtocol(Protocol):
 class VideoVariantRepoProtocol(Protocol):
     async def create(self: Self, variant: VideoVariant) -> VideoVariant: ...
     async def update(self: Self, variant: VideoVariant) -> VideoVariant: ...
+    async def batch_update_variant_states(
+        self: Self, video_id: UUID, state: VideoVariantProcessingState
+    ) -> None: ...
     async def get_all_by_video_id(
         self: Self, video_id: UUID
     ) -> Iterable[VideoVariant]: ...
@@ -95,9 +99,9 @@ class VideoService:
         )
 
         # TODO: remove circular import
-        from tvp.videos.tasks import probe_video  # noqa: PLC0415
+        from tvp.videos.tasks import process_video_task  # noqa: PLC0415
 
-        await probe_video.kiq(video.id)  # ty:ignore[no-matching-overload]
+        await process_video_task.kiq(video.id)  # ty:ignore[no-matching-overload]
 
         return VideoSchema.model_validate(video, from_attributes=True)
 
@@ -112,7 +116,7 @@ class VideoService:
 
         return VideoSchema.model_validate(v, from_attributes=True)
 
-    async def create_empty_variant(
+    async def create_variant(
         self: Self, req: CreateVideoVariantSchema
     ) -> VideoVariantSchema:
         """Create empty variant for video."""
@@ -171,12 +175,16 @@ class VideoService:
 
     async def get_variants_by_video_id(
         self: Self, video_id: UUID
-    ) -> Iterable[VideoVariant]:
+    ) -> Iterable[VideoVariantSchema]:
         """Get list of variants for given video id."""
         if not await self._video_repo.exists_by_id(video_id):
             raise NotFoundError
 
-        return await self._video_variant_repo.get_all_by_video_id(video_id)
+        variants = await self._video_variant_repo.get_all_by_video_id(video_id)
+
+        return [
+            VideoVariantSchema.model_validate(v, from_attributes=True) for v in variants
+        ]
 
     async def get_variant(
         self: Self, req: GetVideoVariantSchema
@@ -212,3 +220,11 @@ class VideoService:
         variant = await self._video_variant_repo.update(variant)
 
         return VideoVariantSchema.model_validate(variant, from_attributes=True)
+
+    async def batch_update_variant_state(
+        self: Self, req: BatchUpdateVideoVariantState
+    ) -> None:
+        """Update variants' status of a specific video."""
+        await self._video_variant_repo.batch_update_variant_states(
+            video_id=req.video_id, state=req.state
+        )
