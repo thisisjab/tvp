@@ -140,9 +140,12 @@ async def generate_master_playlist(
             msg = "Cannot create hls playlist"
             raise InternalServerError(msg)
 
+        logger.info("uploading hls output", video_id=video_id)
         await file_service.upload_dir(
             path=hls_output_dir, prefix=hls_dir_prefix(video_id)
         )
+
+    await video_service.update_video_state(video_id, VideoProcessingState.READY)
 
 
 def _build_ffmpeg_audio_transcode_params(
