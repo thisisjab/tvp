@@ -1,45 +1,21 @@
 import asyncio
-import uuid
+from collections.abc import Generator
 from datetime import timedelta
-from typing import Protocol, Self
-from uuid import UUID
+from typing import Self
 
 import anyio
 import magic
 import minio
 import structlog
 from minio import Minio, S3Error, ServerError
-from pydantic import BaseModel
 
 from tvp import config
-from tvp.errors import BadRequestError, FieldsError, InternalServerError, NotFoundError
-from tvp.files import storage_keys
-from tvp.files.models import UploadedFile
-from tvp.files.schemas import (
-    ConfirmFileUploadSchema,
-    CreateUploadRequestSchema,
-    DirectPathUploadSchema,
-    FileSchema,
-    FileUploadResponse,
-)
-from tvp.users.utils import create_jwt, validate_jwt
+from tvp.errors import InternalServerError
+from tvp.errors.base import APIError
+from tvp.files.schemas import FileObjectInfo, TemporaryUploadUrlSchema
 from tvp.utils.datetime import get_now
 
 logger = structlog.getLogger()
-
-
-class _FileUploadRequestJWTSchema(BaseModel):
-    generated_file_id: str
-    uploader_id: str
-    name: str
-    mimetype: str
-    size_bytes: int
-
-
-class FileRepoProtocol(Protocol):
-    async def create(self: Self, file: UploadedFile) -> UploadedFile: ...
-    async def get_by_id(self: Self, id_: UUID) -> UploadedFile | None: ...
-    async def exists_by_id(self: Self, id_: UUID) -> bool: ...
 
 
 class FileService:
@@ -47,16 +23,13 @@ class FileService:
 
     def __init__(
         self: Self,
-        file_repo: FileRepoProtocol,
         minio: Minio,
         bucket: str,
     ) -> None:
-        self._file_repo = file_repo
         self._minio = minio
         self._bucket = bucket
 
         self.MAX_FILE_SIZE_BYTES = config.file_upload.max_upload_size_bytes
-        self.ALLOWED_MIMETYPES: list[str] = config.file_upload.allowed_mimetypes
         self.FILE_UPLOAD_REQUEST_EXPIRY = timedelta(
             seconds=config.file_upload.upload_url_expiry_seconds
         )
@@ -64,231 +37,109 @@ class FileService:
             seconds=config.file_upload.default_download_url_expiry_seconds
         )
 
-    async def create_upload_request(
-        self: Self, req: CreateUploadRequestSchema
-    ) -> FileUploadResponse:
-        """Validate upload request and generate a pre-signed resumable upload link.
+    async def generate_temprary_upload_url(
+        self: Self,
+        key: str,
+        expiry: timedelta | None = None,
+    ) -> TemporaryUploadUrlSchema:
+        """Generate a pre-signed resumable upload link.
 
         Client will use given `upload_url` to upload file before expiry. After a
         successful file upload, client will finalize upload by sending back the
-        given token. If uploaded file is eqaul to values stored in token, file record
-        is stored in database and upload is finalized.
+        given token. If uploaded file is eqaul to values stored in token, then the
+        upload is finalized which means client can use object key to retrieve file
+        later.
         """
-        # Validation in advance so that client doesn't need uploading if some rule
-        # is voiolated
-        if not (1 <= req.size_bytes <= self.MAX_FILE_SIZE_BYTES):
-            raise FieldsError(
-                {
-                    "size_bytes": [
-                        f"Upload size_bytes must be between 1 and {self.MAX_FILE_SIZE_BYTES}."  # noqa: E501
-                    ]
-                }
-            )
-
-        if req.mimetype not in self.ALLOWED_MIMETYPES:
-            raise FieldsError({"mimetype": ["This mimetype is not allowed."]})
-
-        # Generate upload request id
-        generated_file_id = uuid.uuid4()
-
-        # Create token
-        expires_at = get_now() + self.FILE_UPLOAD_REQUEST_EXPIRY
-        request_token = create_jwt(
-            _FileUploadRequestJWTSchema(
-                generated_file_id=str(generated_file_id),
-                uploader_id=str(req.uploader_id),
-                mimetype=req.mimetype,
-                size_bytes=req.size_bytes,
-                name=req.name,
-            ),
-            expires_at,
-        )
+        expiry = expiry or self.FILE_UPLOAD_REQUEST_EXPIRY
+        expires_at = get_now() + expiry
 
         # Get resumable file upload presigned link
-        object_key = storage_keys.file_upload_key(
-            req.mimetype,
-            generated_file_id,
-            req.name,
-        )
         upload_url = self._minio.presigned_put_object(
             bucket_name=self._bucket,
-            object_name=object_key,
-            expires=self.FILE_UPLOAD_REQUEST_EXPIRY,
+            object_name=key,
+            expires=expiry,
         )
 
-        return FileUploadResponse(
-            request_token=request_token,
+        return TemporaryUploadUrlSchema(
+            url=upload_url,
             expires_at=expires_at,
-            upload_url=upload_url,
         )
 
-    async def confirm_upload(
+    async def validate_upload(
         self: Self,
-        req: ConfirmFileUploadSchema,
-    ) -> FileSchema:
-        """Check if uploaded file in minio has the properties (size, mimetype) that client claimed."""  # noqa: E501
-        # Validate token
-        data = validate_jwt(req.request_token, _FileUploadRequestJWTSchema)
-        if data is None:
-            msg = "Request token is invalid."
-            raise BadRequestError(msg)
-
-        # Check if file is not already in database
-        if await self._file_repo.exists_by_id(UUID(data.generated_file_id)):
-            msg = "File upload request is already finalized."
-            raise BadRequestError(msg)
-
-        # Generate object key
-        object_key = storage_keys.file_upload_key(
-            data.mimetype, uuid.UUID(data.generated_file_id), data.name
-        )
-
+        key: str,
+        expected_mimetypes: list[str],
+        max_size_bytes: int | None = None,
+    ) -> None:
+        """Check if file is uploaded to storage."""
         # Get object stat from minio to make sure file exists
         try:
-            object_stat = self._minio.stat_object(self._bucket, object_key)
+            object_stat = self._minio.stat_object(self._bucket, key)
         except minio.error.S3Error as e:
-            msg = "File is not uploaded."
-            raise BadRequestError(msg) from e
+            raise APIError("UPLOADED_FILE_DOES_NOT_EXIST", "") from e  # noqa: EM101
 
         # Check file size matches
         if object_stat.size is None:
+            logger.info("cannot get object size from objcet stat", key=key)
             raise InternalServerError
 
-        if object_stat.size != data.size_bytes:
-            msg = f"Uploaded file size does not match ({data.size_bytes})."
-            raise BadRequestError(msg)
+        max_size_bytes = max_size_bytes or self.MAX_FILE_SIZE_BYTES
+        if object_stat.size > max_size_bytes:
+            await asyncio.to_thread(self._minio.remove_object(self._bucket, key))
+            raise APIError("UPLOADED_FILE_HAS_WRONG_SIZE", "")  # noqa: EM101
 
         # Get file's first 4 kbytes to validate mimetype
         object_binary = self._minio.get_object(
-            self._bucket, object_key, length=min(object_stat.size, 4 * 1024)
+            self._bucket, key, length=min(object_stat.size, 4 * 1024)
         )
 
         # Get mimetype
         actual_mimetype = magic.from_buffer(object_binary.read(), mime=True)
-        if actual_mimetype != data.mimetype:
-            msg = f"Uploaded file mimetype does not match ({data.mimetype})."
-            raise BadRequestError(msg)
+        if actual_mimetype not in expected_mimetypes:
+            await asyncio.to_thread(self._minio.remove_object(self._bucket, key))
+            raise APIError("UPLOADED_FILE_HAS_WRONG_MIMETYPE", "")  # noqa: EM101
 
-        # Save to database
-        file = await self._file_repo.create(
-            UploadedFile(
-                id=uuid.UUID(data.generated_file_id),
-                key=object_key,
-                name=data.name,
-                size_bytes=object_stat.size,
-                mimetype=actual_mimetype,
-                uploader_id=req.uploader_id,
-            )
-        )
+    async def get_download_link(
+        self: Self, key: str, expiry: timedelta | None = None
+    ) -> str:
+        """Get temporary download link for a file."""
+        expiry = expiry or self.DEFAULT_DOWNLOAD_URL_EXPIRY
 
-        # Get download link
-        file.url = self._minio.get_presigned_url(  # ty:ignore[unresolved-attribute]
-            "GET", self._bucket, file.key, self.DEFAULT_DOWNLOAD_URL_EXPIRY
-        )
+        return self._minio.get_presigned_url("GET", self._bucket, key, expires=expiry)
 
-        return FileSchema.model_validate(file, from_attributes=True)
-
-    async def get_by_id(self: Self, id_: UUID) -> FileSchema | None:
-        """Get file given its id."""
-        f = await self._file_repo.get_by_id(id_)
-
-        if not f:
-            return None
-
-        # Get download link
-        f.url = self._minio.get_presigned_url(  # ty:ignore[invalid-assignment]
-            "GET", self._bucket, f.key, self.DEFAULT_DOWNLOAD_URL_EXPIRY
-        )
-
-        return FileSchema.model_validate(f, from_attributes=True)
-
-    async def direct_path_upload(
-        self: Self, req: DirectPathUploadSchema
-    ) -> FileSchema | None:
-        """Upload file stored in gien path with given key.
-
-        If you set `store_in_db` to false, then None will be returned.
-
-        NOTE: This is an internal service method used by video processing
-        tasks to store chunks and playlists with their on respective hierarchy.
-        """
+    async def upload_file_from_path(self: Self, key: str, path: str) -> None:
+        """Upload file stored in given path in storage with given key."""
         # Validation
-        p = anyio.Path(req.file_path)
+        p = anyio.Path(path)
         if not await p.exists():
-            msg = "File doesn't exist."
-            raise ValueError(msg)
+            raise APIError("FILE_DOES_NOT_EXIST", "")  # noqa: EM101
 
         if not await p.is_file():
-            msg = "Directory upload is not supported."
-            raise ValueError(msg)
+            raise APIError("NOT_VALID_FILE", "")  # noqa: EM101
 
-        size_bytes = (await p.stat()).st_size
-        if size_bytes > config.file_upload.max_upload_size_bytes:
-            msg = "File is too large."
-            raise ValueError(msg)
-
-        mimetype = magic.from_file(req.file_path, mime=True)
-        if mimetype not in config.file_upload.allowed_mimetypes:
-            msg = f"Mimetype {mimetype} is not allowed."
-            raise ValueError(msg)
-
-        # TODO: check if other object is already stored with given key
+        mimetype = magic.from_file(path, mime=True)
 
         # Upload
         await asyncio.to_thread(
             self._minio.fput_object,
             self._bucket,
-            req.key,
-            req.file_path,
+            key,
+            path,
             mimetype,
         )
 
-        # Store
-        if req.store_in_db:
-            f = await self._file_repo.create(
-                UploadedFile(
-                    id=uuid.uuid4(),
-                    name=req.name,
-                    key=req.key,
-                    mimetype=mimetype,
-                    size_bytes=size_bytes,
-                    uploader_id=req.uploader_id,
-                )
-            )
-
-            # Get download link
-            f.url = self._minio.get_presigned_url(  # ty:ignore[unresolved-attribute]
-                "GET", self._bucket, f.key, self.DEFAULT_DOWNLOAD_URL_EXPIRY
-            )
-
-            return FileSchema.model_validate(f, from_attributes=True)
-
-        return None
-
-    async def download_to_path(self: Self, id_: UUID, output_path: str) -> None:
-        """Download a file to given path using the object key."""
-        file = await self._file_repo.get_by_id(id_)
-        if not file:
-            raise NotFoundError
-
+    async def download_to_path(self: Self, key: str, path: str) -> None:
+        """Download given object to given path."""
         try:
-            await asyncio.to_thread(
-                self._minio.fget_object, self._bucket, file.key, output_path
-            )
+            await asyncio.to_thread(self._minio.fget_object, self._bucket, key, path)
         except S3Error as e:
             if e.code == "NoSuchKey":
-                logger.exception(
-                    "no such key in the bucker to download",
-                    bucket=self._bucket,
-                    key=file.key,
-                    exc_info=e,
-                )
-                raise NotFoundError from e
+                raise APIError("NO_SUCH_KEY", "") from e  # noqa: EM101
 
             logger.exception(
-                "unhandled s3 error",
+                "unhandled s3 error when downloading to path",
                 bucket=self._bucket,
-                key=file.key,
+                key=key,
                 exc_info=e,
             )
             raise ServerError from e
@@ -296,8 +147,45 @@ class FileService:
             logger.exception(
                 "cannot create file",
                 bucket=self._bucket,
-                key=file.key,
-                output_path=output_path,
+                key=key,
+                output_path=path,
                 exc_info=e,
             )
             raise ServerError from e
+
+    def list_objects(
+        self: Self, prefix: str, *, recursive: bool = False
+    ) -> Generator[FileObjectInfo]:
+        """List objects in given prefix."""
+        result = self._minio.list_objects(
+            bucket_name=self._bucket,
+            prefix=prefix,
+            recursive=recursive,
+        )
+
+        for r in result:
+            yield FileObjectInfo(key=r.key, is_dir=r.is_dir)
+
+    async def upload_dir(self: Self, path: str, prefix: str) -> None:
+        """Recursively upload files in given directory to specified prefix."""
+        base_path = await anyio.Path(path).resolve()
+
+        async for root, _, files in base_path.walk():
+            # Calculate relative path from base directory
+            rel_path = str(root.relative_to(base_path))
+            if rel_path == ".":
+                rel_path = ""
+
+            for f in files:
+                # Construct full local file path
+                local_file = root / f
+
+                # Construct S3 key
+                key = f"{prefix}/{rel_path}/{f}" if rel_path else f"{prefix}/{f}"
+
+                await asyncio.to_thread(
+                    self._minio.fput_object,
+                    self._bucket,
+                    key,
+                    str(local_file),
+                )
