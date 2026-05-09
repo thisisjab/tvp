@@ -157,14 +157,19 @@ class FileService:
         self: Self, prefix: str, *, recursive: bool = False
     ) -> Generator[FileObjectInfo]:
         """List objects in given prefix."""
+        normalized_prefix = prefix if prefix.endswith("/") else f"{prefix}/"
         result = self._minio.list_objects(
             bucket_name=self._bucket,
-            prefix=prefix,
+            prefix=normalized_prefix,
             recursive=recursive,
         )
 
         for r in result:
-            yield FileObjectInfo(key=r.key, is_dir=r.is_dir)
+            yield FileObjectInfo(
+                name=r.object_name.split("/")[-1],
+                key=r.object_name,
+                is_dir=r.is_dir,
+            )
 
     async def upload_dir(self: Self, path: str, prefix: str) -> None:
         """Recursively upload files in given directory to specified prefix."""

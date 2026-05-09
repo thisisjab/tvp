@@ -9,5 +9,6 @@ class TemporaryUploadUrlSchema(BaseModel):
 
 
 class FileObjectInfo(BaseModel):
+    name: str
     key: str
     is_dir: bool

@@ -26,5 +26,10 @@ def validate_jwt[T: BaseModel](token: str, dest: type[T]) -> T | None:
     try:
         data = jwt.decode(token, key=config.jwt.secret_key, algorithms=["HS256"])
         return dest.model_validate(data, extra="ignore")
-    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError, pydantic.ValidationError):
+    except (
+        jwt.ExpiredSignatureError,
+        jwt.InvalidTokenError,
+        pydantic.ValidationError,
+    ) as e:
+        logger.debug("cannot validate token due to error", exc_info=e)
         return None

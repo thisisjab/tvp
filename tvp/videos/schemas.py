@@ -4,18 +4,20 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
-from tvp.videos.constants import VideoVariantCode, VideoVariantProcessingState
+from tvp.videos.constants import VideoProcessingState, VideoVariantCode
 
 
-class VideoMasterPlaylist(BaseModel):
-    """VideoMasterPlaylist defines the schema for master playlist of a video.
-
-    Clients must include `access_token` in every request to objects (playlists, chunks)
-    inside `Authorization` header as bearer token.
+class VideoPreSaveJWT(BaseModel):
     """
+    VideoPreSaveJWT is to store video info in JWT token which will be later
+    used to confirm upload and create video record in database.
+    """  # noqa: D205
 
-    access_token: str
-    url: str
+    video_id: str
+    owner_id: str
+    title: str
+    description: str | None
+    is_public: bool
 
 
 class VideoSchema(BaseModel):
@@ -23,19 +25,18 @@ class VideoSchema(BaseModel):
 
     id: UUID
     owner_id: UUID
-    file_id: UUID = Field(exclude=True)
+    state: VideoProcessingState
     title: str
     description: str
     is_public: bool
     duration_seconds: float | None = Field(default=None)
-    master_playlist: VideoMasterPlaylist | None = Field(default=None)
+    master_playlist_url: str | None = Field(default=None)
     created_at: datetime
 
 
 class CreateVideoSchema(BaseModel):
     """CreateVideoSchema defines the schema for creating video in the service."""
 
-    file_id: UUID
     owner_id: UUID
     title: str = Field(max_length=150)
     description: str | None = Field(default=None)
@@ -45,21 +46,43 @@ class CreateVideoSchema(BaseModel):
 class CreateVideoRequest(BaseModel):
     """CreateVideoRequest defines the request schema for creating a video."""
 
-    file_id: UUID
     title: str = Field(max_length=150)
     description: str | None = Field(default=None)
     is_public: bool
 
 
-class CreateVideoResponse(VideoSchema):
-    """CreateVideoResponse defines the response schema for creating a video."""
+class CreateVideoResponse(BaseModel):
+    """CreateVideoResponse defines the response schema for creating a video.
+
+    Client uploads video to given upload url, then finalizes the upload using
+    the token.
+    """
+
+    token: str
+    upload_url: str
+    expires_at: datetime
 
 
-class VideoProbeDataSchema(BaseModel):
-    """VideoProbeDataSchema defines the data format for storing probed video data inside redis."""  # noqa: E501
+class FinalizeVideoUploadSchema(BaseModel):
+    """FinalizeVideoUploadSchema is service schema to indicate uploading video is done.
+
+    Therefore after validation video should be saved in database.
+    """
+
+    user_id: UUID
+    token: str
+
+
+class FinalizeVideoUploadRequest(BaseModel):
+    """FinalizeVideoUploadRequest defines the request schema for finalizing video upload."""  # noqa: E501
+
+    token: str
+
+
+class VideoProbedDataSchema(BaseModel):
+    """VideoProbedDataSchema defines the data format for storing probed video data inside redis."""  # noqa: E501
 
     video_id: UUID
-    video_file_key: str
     width: int
     height: int
     duration_seconds: float
@@ -82,12 +105,11 @@ class VideoProbeDataSchema(BaseModel):
         raise ValueError(msg)
 
 
-class VideoVariantSchema(BaseModel):
-    """VideoVariantSchema defines the schema for VideoVariant model."""
+class VideoTranscodingJobSchema(BaseModel):
+    """VideoTranscodingJobSchema defines the input schema for video trasncoding jobs."""
 
     video_id: UUID
     variant_code: VideoVariantCode
-    file_id: UUID | None = Field(default=None)
     fps: float
     gop_size: int
     video_bitrate: int
@@ -95,46 +117,3 @@ class VideoVariantSchema(BaseModel):
     video_buf_size: int
     audio_bitrate: int
     audio_sample_rate: int
-
-
-class CreateVideoVariantSchema(VideoVariantSchema):
-    """CreateVideoVariantRequest used to request to create video variant from service."""  # noqa: E501
-
-
-class GetVideoVariantSchema(BaseModel):
-    """GetVideoVariantSchema is used to get video variant record from video service."""
-
-    video_id: UUID
-    variant_code: VideoVariantCode
-
-
-class UpdateVideoSchema(BaseModel):
-    """UpdateVideoSchema defines the schema to update videos duration and master playlist file id."""  # noqa: E501
-
-    id: UUID
-    duration_seconds: float | None = Field(default=None)
-    master_playlist_file_id: UUID | None = Field(default=None)
-
-
-class UpdateVariantSchema(BaseModel):
-    """UpdateVariantSchema is used to update fields of variants after each processing job."""  # noqa: E501
-
-    video_id: UUID
-    variant_code: VideoVariantCode
-    state: VideoVariantProcessingState
-    file_id: UUID | None = Field(default=None)
-    playlist_file_id: UUID | None = Field(default=None)
-    fps: float | None = Field(default=None)
-    gop_size: int | None = Field(default=None)
-    video_bitrate: int | None = Field(default=None)
-    video_max_bitrate: int | None = Field(default=None)
-    video_buf_size: int | None = Field(default=None)
-    audio_bitrate: int | None = Field(default=None)
-    audio_sample_rate: int | None = Field(default=None)
-
-
-class BatchUpdateVideoVariantState(BaseModel):
-    """BatchUpdateVideoVariantState is used by tasks to inform about processing state of a variant."""  # noqa: E501
-
-    video_id: UUID
-    state: VideoVariantProcessingState

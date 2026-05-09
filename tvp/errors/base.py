@@ -1,12 +1,17 @@
 from typing import Any, Self
 
+import structlog
+from fastapi import status
+
 from tvp.errors.constants import APIErrorCode
+
+logger = structlog.getLogger()
 
 
 class APIError(Exception):
     def __init__(
         self: Self,
-        code: APIErrorCode,
+        code: APIErrorCode | str,
         message: str,
         metadata: Any | None = None,  # noqa: ANN401 # TODO: fix me after getting internet connection
     ) -> None:
@@ -20,12 +25,26 @@ class APIError(Exception):
     def make_response(self: Self) -> tuple[dict[str, Any], int]:
         """Make response generates response dictionary and http status code which can be used in routes and error handlers."""  # noqa: E501
         response = {
-            "code": self.code.name.lower(),
+            "code": self.code.name.lower()
+            if isinstance(self.code, APIErrorCode)
+            else self.code.lower(),
             "message": self.message,
         }
 
         if self.metadata:
             response["metadata"] = self.metadata
+
+        if isinstance(self.code, str):
+            logger.error(
+                "attempt to make response for non public api error",
+                message=self.message,
+                code=self.code,
+                metadata=self.metadata,
+            )
+            return {
+                "message": "Internal server error.",
+                "code": "internal_server_error",
+            }, status.HTTP_500_INTERNAL_SERVER_ERROR
 
         return response, self.code.value
 

@@ -1,13 +1,18 @@
 from enum import Enum, StrEnum
 
 
-class VideoVariantProcessingState(StrEnum):
+class VideoProcessingState(StrEnum):
+    NOT_STARTED = "NOT_STARTED"
+
+    # Phase 2
+    TRANSCODING = "TRANSCODING"
+    TRANSCODING_FAILED = "TRANSCODING_FAILED"
+
+    # Phase 3
     MUXING = "MUXING"
     MUXING_FAILED = "MUXING_FAILED"
-    MUXING_NOT_STARTED = "MUXING_NOT_STARTED"
-    PROCESSING = "PROCESSING"
-    PROCESSING_FAILED = "PROCESSING_FAILED"
-    PROCESSING_NOT_STARTED = "PROCESSING_NOT_STARTED"
+
+    # Final stage
     READY = "READY"
 
 
