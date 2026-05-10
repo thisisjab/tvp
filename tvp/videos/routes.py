@@ -1,6 +1,9 @@
-from fastapi import APIRouter
+from typing import Annotated
+
+from fastapi import APIRouter, Depends
 
 from tvp.users.deps import CurrentUserDep
+from tvp.utils.pagination import PaginatedAPIResponse, PaginationParams
 from tvp.videos.deps import VideoServiceDep
 from tvp.videos.schemas import (
     CreateVideoRequest,
@@ -8,10 +11,25 @@ from tvp.videos.schemas import (
     CreateVideoSchema,
     FinalizeVideoUploadRequest,
     FinalizeVideoUploadSchema,
+    VideoFilters,
+    VideoFiltersContext,
     VideoSchema,
 )
 
 videos_router = APIRouter(tags=["Video"])
+
+
+@videos_router.get("")
+async def list_videos(
+    video_service: VideoServiceDep,
+    user: CurrentUserDep,
+    filters_q: Annotated[VideoFilters, Depends()],
+    pagination_q: Annotated[PaginationParams, Depends()],
+) -> PaginatedAPIResponse[VideoSchema]:
+    """List all public videos or the ones that are owned by the user."""
+    return await video_service.get_user_videos(
+        filters_q, VideoFiltersContext(user_id=user.id), pagination_q
+    )
 
 
 @videos_router.post("")

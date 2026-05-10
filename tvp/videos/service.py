@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from datetime import timedelta
 from typing import Protocol, Self
 from uuid import UUID, uuid4
@@ -13,6 +14,11 @@ from tvp.errors.base import APIError
 from tvp.files.deps import TaskiqFileServiceDep
 from tvp.users.utils import create_jwt, validate_jwt
 from tvp.utils.datetime import get_now
+from tvp.utils.pagination import (
+    PaginatedAPIResponse,
+    PaginationParams,
+    generate_paginated_response,
+)
 from tvp.videos.cache_keys import video_probe_data_cache_key
 from tvp.videos.constants import VideoProcessingState
 from tvp.videos.models import Video
@@ -20,6 +26,8 @@ from tvp.videos.schemas import (
     CreateVideoResponse,
     CreateVideoSchema,
     FinalizeVideoUploadSchema,
+    VideoFilters,
+    VideoFiltersContext,
     VideoPreSaveJWT,
     VideoProbedDataSchema,
     VideoSchema,
@@ -31,6 +39,12 @@ logger = structlog.getLogger()
 
 
 class VideoRepoProtocol(Protocol):
+    async def get_all(
+        self: Self,
+        context: VideoFiltersContext,
+        filters: VideoFilters,
+        pagination_params: PaginationParams,
+    ) -> tuple[int, Iterable[Video]]: ...
     async def create(self: Self, video: Video) -> Video: ...
     async def update(self: Self, video: Video) -> Video: ...
     async def exists_by_id(self: Self, id_: UUID) -> bool: ...
@@ -49,6 +63,19 @@ class VideoService:
         self._redis = redis
 
         self.ALLOWED_MIMETYPES = ["video/mp4", "video/mkv"]
+
+    async def get_user_videos(
+        self: Self,
+        filters: VideoFilters,
+        context: VideoFiltersContext,
+        pagination_params: PaginationParams,
+    ) -> PaginatedAPIResponse[VideoSchema]:
+        """Get all public/private videos that is watchable by user."""
+        count, videos = await self._video_repo.get_all(
+            context, filters, pagination_params
+        )
+        videos = [VideoSchema.model_validate(v, from_attributes=True) for v in videos]
+        return generate_paginated_response(videos, count, pagination_params)
 
     async def create_video(self: Self, req: CreateVideoSchema) -> CreateVideoResponse:
         """Create a JWT for video upload and let the upload be finalized.

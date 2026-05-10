@@ -34,6 +34,16 @@ class VideoSchema(BaseModel):
     created_at: datetime
 
 
+class VideoFilters(BaseModel):
+    is_public: bool | None = Field(default=None)
+    title: str | None = Field(default=None)
+    owner_id: UUID | None = Field(default=None)
+
+
+class VideoFiltersContext(BaseModel):
+    user_id: UUID
+
+
 class CreateVideoSchema(BaseModel):
     """CreateVideoSchema defines the schema for creating video in the service."""
 

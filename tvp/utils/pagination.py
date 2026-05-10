@@ -1,7 +1,5 @@
 import math
-from typing import Annotated
 
-from fastapi import Query
 from pydantic import BaseModel, Field
 
 from tvp.errors import BadRequestError
@@ -10,9 +8,6 @@ from tvp.errors import BadRequestError
 class PaginationParams(BaseModel):
     page: int = Field(examples=[1], gt=0)
     page_size: int = Field(examples=[20], gt=0, lt=101)
-
-
-PaginationParamsQuery = Annotated[PaginationParams, Query()]
 
 
 class PaginationMetadata(BaseModel):
